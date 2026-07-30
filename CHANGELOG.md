@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.3.0
+
+### Features
+
+- **Native ads**: full React Native bridge for Appodeal Native (the previously
+  missing format). Adds `AppodealAdType.NATIVE`, module APIs
+  (`getNativeAds`, `getAvailableNativeAdsCount`, `destroyNativeAd`,
+  `cacheNativeAds`, `setPreferredNativeContentType`),
+  `AppodealNativeEvents`, and the `<AppodealNative />` view component
+  (templates: `newsFeed` / `appWall` / `contentStream`).
+- Android: `Appodeal.NATIVE` type mapping, `NativeCallbacks`, ad store,
+  template `NativeAdView` registration.
+- iOS: `APDNativeAdQueue` store, `getViewForPlacement` view binding,
+  native event constants.
+
 ## 4.2.0
 
 ### Features

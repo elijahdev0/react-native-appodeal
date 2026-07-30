@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.util.Log
 import com.appodeal.ads.Appodeal
+import com.appodeal.ads.NativeMediaViewContentType
 import com.appodeal.ads.inapp.InAppPurchase
 import com.appodeal.ads.inapp.InAppPurchaseValidateCallback
 import com.appodeal.ads.service.ServiceError
@@ -11,6 +12,7 @@ import com.appodeal.rnappodeal.callbacks.RNAppodealAdRevenueCallbacks
 import com.appodeal.rnappodeal.callbacks.RNAppodealBannerCallbacks
 import com.appodeal.rnappodeal.callbacks.RNAppodealInterstitialCallbacks
 import com.appodeal.rnappodeal.callbacks.RNAppodealMrecCallbacks
+import com.appodeal.rnappodeal.callbacks.RNAppodealNativeCallbacks
 import com.appodeal.rnappodeal.callbacks.RNAppodealRewardedVideoCallbacks
 import com.appodeal.rnappodeal.ext.AdTypeExtensions.toAppodealTypes
 import com.appodeal.rnappodeal.ext.LogLevelExtensions.toLogLevel
@@ -27,6 +29,7 @@ import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
+import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import java.lang.ref.WeakReference
 
@@ -42,6 +45,7 @@ internal class RNAppodealModuleImpl(
     private val mrecCallbacks by lazy { RNAppodealMrecCallbacks(eventDispatcher) }
     private val rewardedVideoCallbacks by lazy { RNAppodealRewardedVideoCallbacks(eventDispatcher) }
     private val adRevenueCallbacks by lazy { RNAppodealAdRevenueCallbacks(eventDispatcher) }
+    private val nativeCallbacks by lazy { RNAppodealNativeCallbacks(eventDispatcher) }
 
     // Consent handler
     private val consentHandler by lazy { RNAppodealConsent() }
@@ -114,6 +118,7 @@ internal class RNAppodealModuleImpl(
         Appodeal.setBannerCallbacks(bannerCallbacks)
         Appodeal.setMrecCallbacks(mrecCallbacks)
         Appodeal.setRewardedVideoCallbacks(rewardedVideoCallbacks)
+        Appodeal.setNativeCallbacks(nativeCallbacks)
         Appodeal.setAdRevenueCallbacks(adRevenueCallbacks)
 
         // Set up Appodeal options
@@ -386,6 +391,37 @@ internal class RNAppodealModuleImpl(
 
     fun trackEvent(name: String, parameters: ReadableMap) {
         Appodeal.logEvent(name, parameters.toMap())
+    }
+
+    fun getNativeAds(count: Double): WritableArray {
+        val ads = Appodeal.getNativeAds(count.toInt())
+        val storedAds = RNAppodealNativeAdStore.putAds(ads)
+        return Arguments.createArray().apply {
+            storedAds.forEach { pushMap(it) }
+        }
+    }
+
+    fun getAvailableNativeAdsCount(): Double {
+        return Appodeal.getAvailableNativeAdsCount().toDouble()
+    }
+
+    fun destroyNativeAd(adId: String) {
+        RNAppodealNativeAdStore.remove(adId)
+    }
+
+    fun cacheNativeAds(count: Double) {
+        withActivity("cacheNativeAds") { activity ->
+            Appodeal.cache(activity, Appodeal.NATIVE, count.toInt().coerceIn(1, 5))
+        }
+    }
+
+    fun setPreferredNativeContentType(type: String) {
+        val contentType = when (type) {
+            "noVideo" -> NativeMediaViewContentType.NoVideo
+            "video" -> NativeMediaViewContentType.Video
+            else -> NativeMediaViewContentType.Auto
+        }
+        Appodeal.setPreferredNativeContentType(contentType)
     }
 
     // MARK: - Event Management
