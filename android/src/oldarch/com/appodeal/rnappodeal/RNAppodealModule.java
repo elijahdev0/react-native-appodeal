@@ -7,7 +7,6 @@ import com.facebook.react.bridge.ReactApplicationContext;
 import com.facebook.react.bridge.ReactContextBaseJavaModule;
 import com.facebook.react.bridge.ReactMethod;
 import com.facebook.react.bridge.ReadableMap;
-import com.facebook.react.bridge.WritableArray;
 import com.facebook.react.bridge.WritableMap;
 
 public class RNAppodealModule extends ReactContextBaseJavaModule {
@@ -241,7 +240,7 @@ public class RNAppodealModule extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod(isBlockingSynchronousMethod = true)
-    public WritableArray getNativeAds(double count) {
+    public WritableMap getNativeAds(double count) {
         return moduleImplementation.getNativeAds(count);
     }
 

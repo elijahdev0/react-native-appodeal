@@ -334,9 +334,17 @@ const appodeal: Appodeal = {
   },
 
   getNativeAds: (count: number = 1): AppodealNativeAdInfo[] => {
+    // Android TurboModule Spec uses UnsafeObject → { ads: [...] }
     const result = NativeAppodeal.getNativeAds(count) as unknown;
     if (Array.isArray(result)) {
       return result as AppodealNativeAdInfo[];
+    }
+    if (
+      result &&
+      typeof result === 'object' &&
+      Array.isArray((result as { ads?: unknown }).ads)
+    ) {
+      return (result as { ads: AppodealNativeAdInfo[] }).ads;
     }
     return [];
   },

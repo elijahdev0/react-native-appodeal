@@ -3,7 +3,6 @@ package com.appodeal.rnappodeal
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
-import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.module.annotations.ReactModule
 
@@ -198,7 +197,7 @@ class RNAppodealModule(
         moduleImplementation.trackEvent(name, parameters)
     }
 
-    override fun getNativeAds(count: Double): WritableArray {
+    override fun getNativeAds(count: Double): WritableMap {
         return moduleImplementation.getNativeAds(count)
     }
 

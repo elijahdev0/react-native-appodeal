@@ -29,7 +29,6 @@ import com.facebook.react.bridge.LifecycleEventListener
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReadableMap
-import com.facebook.react.bridge.WritableArray
 import com.facebook.react.bridge.WritableMap
 import java.lang.ref.WeakReference
 
@@ -393,11 +392,18 @@ internal class RNAppodealModuleImpl(
         Appodeal.logEvent(name, parameters.toMap())
     }
 
-    fun getNativeAds(count: Double): WritableArray {
+    /**
+     * TurboModule codegen maps Spec `UnsafeObject` → WritableMap.
+     * Shape: `{ ads: Array<NativeAdInfo> }`.
+     */
+    fun getNativeAds(count: Double): WritableMap {
         val ads = Appodeal.getNativeAds(count.toInt())
         val storedAds = RNAppodealNativeAdStore.putAds(ads)
-        return Arguments.createArray().apply {
+        val array = Arguments.createArray().apply {
             storedAds.forEach { pushMap(it) }
+        }
+        return Arguments.createMap().apply {
+            putArray("ads", array)
         }
     }
 
