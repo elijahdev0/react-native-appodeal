@@ -38,16 +38,8 @@
     }
 
     APDNativeAdQueue *queue = [[APDNativeAdQueue alloc] init];
-    if ([APDNativeAdSettings respondsToSelector:@selector(defaultSettings)]) {
-        queue.settings = [APDNativeAdSettings defaultSettings];
-    } else if ([APDNativeAdSettings respondsToSelector:@selector(default)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Warc-performSelector-leaks"
-        queue.settings = [APDNativeAdSettings performSelector:@selector(default)];
-#pragma clang diagnostic pop
-    } else {
-        queue.settings = [[APDNativeAdSettings alloc] init];
-    }
+    // Appodeal iOS docs: APDNativeAdSettings.default()
+    queue.settings = [APDNativeAdSettings default];
     queue.settings.adViewClass = APDDefaultNativeAdView.class;
     queue.settings.type = [self nativeAdTypeFromPreferredContentType:self.preferredContentType];
     queue.delegate = self;
@@ -101,10 +93,7 @@
         return 0;
     }
 
-    if ([self.queue respondsToSelector:@selector(availableAdsCount)]) {
-        return self.queue.availableAdsCount;
-    }
-
+    // APDNativeAdQueue exposes currentAdCount; Appodeal also has availableNativeAdsCount.
     if ([self.queue respondsToSelector:@selector(currentAdCount)]) {
         return self.queue.currentAdCount;
     }
