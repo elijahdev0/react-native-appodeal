@@ -1,17 +1,16 @@
 package com.appodeal.rnappodeal
 
 import android.content.Context
-import android.graphics.Color
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.View
 import android.view.ViewGroup
-import android.widget.FrameLayout
+import android.widget.TextView
 import com.appodeal.ads.NativeAd
 import com.appodeal.ads.nativead.NativeAdView
-import com.appodeal.ads.nativead.NativeAdViewAppWall
-import com.appodeal.ads.nativead.NativeAdViewContentStream
-import com.appodeal.ads.nativead.NativeAdViewNewsFeed
+import com.appodeal.ads.nativead.NativeIconView
+import com.appodeal.ads.nativead.NativeMediaView
 import com.appodeal.ads.nativead.Position
 import com.appodeal.rnappodeal.callbacks.RNAppodealEventHandler
 import com.appodeal.rnappodeal.constants.NativeEvents
@@ -20,17 +19,16 @@ import com.facebook.react.bridge.ReactContext
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.uimanager.UIManagerHelper
 import com.facebook.react.uimanager.events.Event
-import com.facebook.react.views.view.ReactViewGroup
 import java.lang.ref.WeakReference
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * RN host for Appodeal **stock** native templates
- * (`newsFeed` / `appWall` / `contentStream`).
- *
- * Custom layouts use [RCTAppodealNativeAdView] + asset children instead.
+ * Composable native ad root — matches Appodeal Android demo custom [NativeAdView]
+ * (`native_ad_view_custom.xml`): asset children + [registerView].
  */
-class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppodealEventHandler {
+class RCTAppodealNativeAdView(context: Context) :
+    NativeAdView(context),
+    RNAppodealEventHandler {
 
     private val reactContext: ReactContext = context as ReactContext
     private val surfaceId: Int by lazy { UIManagerHelper.getSurfaceId(reactContext) }
@@ -56,57 +54,34 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
             }
         }
 
-    var adTemplate: String = "contentStream"
-        set(value) {
-            val normalized = value.ifBlank { "contentStream" }
-            if (field == normalized) return
-            field = normalized
-            tearDownAdView()
-            boundAdId = null
-            bindGeneration++
-            scheduleBind(BIND_DELAY_MS)
-        }
-
-    private var adView: NativeAdView? = null
     private var boundAdId: String? = null
     private var bindRunnable: Runnable? = null
     private var bindGeneration: Int = 0
     private var bindAttempts: Int = 0
 
-    private val measureAndLayout = Runnable {
-        val w = measuredWidth
-        val h = measuredHeight
-        if (w <= 0 || h <= 0) return@Runnable
-        for (i in 0 until childCount) {
-            val child = getChildAt(i)
-            child.visibility = VISIBLE
-            child.measure(
-                MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY)
-            )
-            child.layout(0, 0, child.measuredWidth, child.measuredHeight)
-        }
-    }
-
     init {
         liveViews.add(WeakReference(this))
         visibility = VISIBLE
-        setBackgroundColor(Color.TRANSPARENT)
-        contentDescription = "appodeal-native-host"
+        setAdChoicesPosition(Position.END_TOP)
         clipChildren = false
         clipToPadding = false
+        contentDescription = "appodeal-native-ad-view"
     }
 
-    override fun requestLayout() {
-        super.requestLayout()
-        post(measureAndLayout)
+    fun onAssetChanged() {
+        if (boundAdId != null) {
+            boundAdId = null
+            bindGeneration++
+        }
+        if (!adId.isNullOrEmpty()) {
+            scheduleBind(BIND_DELAY_MS)
+        }
     }
 
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        super.onLayout(changed, left, top, right, bottom)
-        post(measureAndLayout)
-        if (right - left > 0 && bottom - top > 0 && boundAdId == null && !adId.isNullOrEmpty()) {
-            scheduleBind(0)
+    override fun onViewAdded(child: View?) {
+        super.onViewAdded(child)
+        if (!adId.isNullOrEmpty() && boundAdId == null) {
+            scheduleBind(BIND_DELAY_MS)
         }
     }
 
@@ -117,11 +92,21 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
         }
     }
 
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        if (right - left > 0 && bottom - top > 0 && boundAdId == null && !adId.isNullOrEmpty()) {
+            scheduleBind(0)
+        }
+    }
+
     fun cleanup() {
         bindRunnable?.let { uiHandler.removeCallbacks(it) }
         bindRunnable = null
         bindGeneration++
-        tearDownAdView()
+        try {
+            unregisterView()
+        } catch (_: Exception) {
+        }
         boundAdId = null
         bindAttempts = 0
         val self = this
@@ -131,63 +116,6 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
     fun onActivityReady() {
         if (boundAdId == null && !adId.isNullOrEmpty()) {
             scheduleBind(0)
-        }
-    }
-
-    private fun tearDownAdView() {
-        val view = adView
-        adView = null
-        if (view != null) {
-            try {
-                view.unregisterView()
-            } catch (_: Exception) {
-            }
-            try {
-                view.destroy()
-            } catch (_: Exception) {
-            }
-            (view.parent as? ViewGroup)?.removeView(view)
-        }
-        removeAllViews()
-    }
-
-    private fun ensureAdView(): NativeAdView {
-        adView?.let { existing ->
-            existing.visibility = VISIBLE
-            post(measureAndLayout)
-            return existing
-        }
-
-        val view = createTemplate(adTemplate).apply {
-            visibility = VISIBLE
-            descendantFocusability = FOCUS_BLOCK_DESCENDANTS
-            setAdChoicesPosition(Position.END_TOP)
-            contentDescription = "appodeal-native-ad"
-            layoutParams = FrameLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
-            )
-        }
-
-        removeAllViews()
-        this.visibility = VISIBLE
-        addView(view)
-        view.bringToFront()
-        try {
-            (parent as? ViewGroup)?.bringChildToFront(this)
-        } catch (_: Exception) {
-        }
-        post(measureAndLayout)
-
-        adView = view
-        return view
-    }
-
-    private fun createTemplate(template: String): NativeAdView {
-        return when (template) {
-            "newsFeed" -> NativeAdViewNewsFeed(context)
-            "appWall" -> NativeAdViewAppWall(context)
-            else -> NativeAdViewContentStream(context)
         }
     }
 
@@ -249,37 +177,40 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
             return
         }
 
-        val view = ensureAdView()
-        view.visibility = VISIBLE
-        runMeasureAndLayoutNow()
-
-        if (view.width <= 0 || view.height <= 0) {
-            if (!retry(gen, id, "child still 0x0 after layout")) {
-                dispatchFailed(id, "child still 0x0 after layout")
+        val assets = collectAssets(this)
+        if (assets.media == null && assets.icon == null) {
+            if (!retry(gen, id, "missing media/icon asset")) {
+                dispatchFailed(id, "composable native ad requires media or icon asset")
             }
             return
         }
 
         try {
-            view.unregisterView()
+            unregisterView()
         } catch (_: Exception) {
         }
 
+        // Same wiring as native_ad_view_custom.xml attrs → registerView.
+        assets.media?.let { setMediaView(it) }
+        assets.icon?.let { setIconView(it) }
+        assets.title?.let { setTitleView(it) }
+        assets.description?.let { setDescriptionView(it) }
+        assets.callToAction?.let { setCallToActionView(it) }
+        assets.attribution?.let { setAdAttributionView(it) }
+
         val registered = try {
-            view.registerView(ad, placement)
+            registerView(ad, placement)
         } catch (e: Exception) {
             Log.e(TAG, "registerView threw", e)
             false
         }
 
-        view.visibility = VISIBLE
-        this.visibility = VISIBLE
-        runMeasureAndLayoutNow()
-
         Log.d(
             TAG,
-            "registerView id=$id result=$registered host=${measuredWidth}x${measuredHeight} " +
-                "childSize=${view.width}x${view.height} template=$adTemplate"
+            "composable registerView id=$id result=$registered " +
+                "size=${measuredWidth}x${measuredHeight} " +
+                "media=${assets.media != null} icon=${assets.icon != null} " +
+                "title=${assets.title != null} cta=${assets.callToAction != null}"
         )
 
         if (gen != bindGeneration) return
@@ -287,29 +218,9 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
         if (registered) {
             boundAdId = id
             bindAttempts = 0
-            uiHandler.postDelayed({
-                if (gen != bindGeneration) return@postDelayed
-                view.visibility = VISIBLE
-                runMeasureAndLayoutNow()
-            }, 100L)
             dispatchLoaded(id)
         } else if (!retry(gen, id, "registerView returned false")) {
             dispatchFailed(id, "registerView returned false")
-        }
-    }
-
-    private fun runMeasureAndLayoutNow() {
-        val w = measuredWidth
-        val h = measuredHeight
-        if (w <= 0 || h <= 0) return
-        for (i in 0 until childCount) {
-            val child = getChildAt(i)
-            child.visibility = VISIBLE
-            child.measure(
-                MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY)
-            )
-            child.layout(0, 0, child.measuredWidth, child.measuredHeight)
         }
     }
 
@@ -349,7 +260,7 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
             NativeEvents.ON_NATIVE_EXPIRED -> {
                 if (boundAdId == null) return
                 try {
-                    adView?.unregisterView()
+                    unregisterView()
                 } catch (_: Exception) {
                 }
                 boundAdId = null
@@ -387,12 +298,21 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
         }
     }
 
+    private data class Assets(
+        val media: NativeMediaView?,
+        val icon: NativeIconView?,
+        val title: TextView?,
+        val description: TextView?,
+        val callToAction: View?,
+        val attribution: View?
+    )
+
     companion object {
-        private const val TAG = "RNAppodealNative"
+        private const val TAG = "RNAppodealNativeAd"
         private const val MAX_BIND_ATTEMPTS = 6
         private const val BIND_DELAY_MS = 200L
 
-        private val liveViews = CopyOnWriteArrayList<WeakReference<RCTAppodealNativeView>>()
+        private val liveViews = CopyOnWriteArrayList<WeakReference<RCTAppodealNativeAdView>>()
 
         fun notifyActivityReady() {
             prune()
@@ -406,7 +326,7 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
                 if (view.adId == adId || view.boundAdId == adId) {
                     view.bindGeneration++
                     try {
-                        view.adView?.unregisterView()
+                        view.unregisterView()
                     } catch (_: Exception) {
                     }
                     view.boundAdId = null
@@ -416,6 +336,36 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
 
         private fun prune() {
             liveViews.removeAll { it.get() == null }
+        }
+
+        private fun collectAssets(root: ViewGroup): Assets {
+            var media: NativeMediaView? = null
+            var icon: NativeIconView? = null
+            var title: TextView? = null
+            var description: TextView? = null
+            var callToAction: View? = null
+            var attribution: View? = null
+
+            fun walk(view: View) {
+                if (view is RCTAppodealNativeAssetView) {
+                    when (view.assetType) {
+                        "media" -> media = view.mediaView() ?: media
+                        "icon" -> icon = view.iconView() ?: icon
+                        "title" -> title = view.textView() ?: title
+                        "description" -> description = view.textView() ?: description
+                        "callToAction" -> callToAction = view.textView() ?: callToAction
+                        "attribution" -> attribution = view.textView() ?: attribution
+                    }
+                }
+                if (view is ViewGroup) {
+                    for (i in 0 until view.childCount) {
+                        walk(view.getChildAt(i))
+                    }
+                }
+            }
+
+            walk(root)
+            return Assets(media, icon, title, description, callToAction, attribution)
         }
     }
 }

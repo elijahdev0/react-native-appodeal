@@ -415,6 +415,7 @@ internal class RNAppodealModuleImpl(
 
     fun destroyNativeAd(adId: String) {
         RCTAppodealNativeView.unbindAdId(adId)
+        RCTAppodealNativeAdView.unbindAdId(adId)
         RNAppodealNativeAdStore.remove(adId)
     }
 
@@ -469,6 +470,7 @@ internal class RNAppodealModuleImpl(
             RNAppodealActivityHolder.set(activity)
         }
         RCTAppodealNativeView.notifyActivityReady()
+        RCTAppodealNativeAdView.notifyActivityReady()
     }
 
     companion object Companion {

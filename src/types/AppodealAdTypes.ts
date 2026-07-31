@@ -33,14 +33,10 @@ export enum AppodealAdType {
 export type AppodealNativeContentType = 'auto' | 'noVideo' | 'video';
 
 /**
- * Native ad template used by AppodealNative view
+ * Native ad template used by AppodealNative view (stock SDK templates).
+ * Custom layouts use AppodealNativeAdView + asset children instead.
  */
-export type AppodealNativeTemplate =
-  | 'newsFeed'
-  | 'appWall'
-  | 'contentStream'
-  /** Portrait feed card: media top ~56%, icon/title/CTA below (matches AdMob grid). */
-  | 'gridCard';
+export type AppodealNativeTemplate = 'newsFeed' | 'appWall' | 'contentStream';
 
 /**
  * Metadata for a cached native ad pulled from the SDK

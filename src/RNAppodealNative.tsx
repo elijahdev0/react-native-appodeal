@@ -1,8 +1,8 @@
 /**
- * Appodeal Native Ad Component
+ * Appodeal Native Ad Component — stock templates only.
  *
- * Renders a platform native-ad template (newsFeed / appWall / contentStream / gridCard)
- * bound to an ad id returned from Appodeal.getNativeAds().
+ * Templates: newsFeed / appWall / contentStream.
+ * For custom JSX layouts use AppodealNativeAdView + asset views.
  */
 import AppodealNativeView, {
   type NativeProps,

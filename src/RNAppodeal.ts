@@ -280,7 +280,7 @@ export interface Appodeal {
 /**
  * Plugin version constant
  */
-const PLUGIN_VERSION = '4.3.0';
+const PLUGIN_VERSION = '4.3.1';
 
 /**
  * Appodeal SDK implementation
