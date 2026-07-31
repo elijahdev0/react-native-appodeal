@@ -843,7 +843,7 @@ Appodeal.addEventListener(AppodealNativeEvents.LOADED, () => {
 <AppodealNative
   adId={ads[0].id}
   placement="default"
-  template="contentStream" // "newsFeed" | "appWall" | "contentStream"
+  adTemplate="contentStream" // "newsFeed" | "appWall" | "contentStream"
   onAdLoaded={() => console.log('Native shown')}
   onAdFailedToLoad={() => console.log('Native failed')}
   onAdClicked={() => console.log('Native clicked')}
