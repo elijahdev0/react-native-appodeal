@@ -20,21 +20,20 @@ import com.facebook.react.bridge.ReactContext
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.uimanager.UIManagerHelper
 import com.facebook.react.uimanager.events.Event
+import com.facebook.react.views.view.ReactViewGroup
 import java.lang.ref.WeakReference
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * RN host for Appodeal native ads.
  *
- * [NativeAdViewContentStream] / templates are **final** — cannot subclass.
- * Official Android demo uses the template as the RecyclerView item root.
- * Here we mirror the working banner bridge: always-VISIBLE [FrameLayout] host,
- * template as MATCH_PARENT child, then [NativeAdView.registerView].
+ * Templates are final (cannot subclass). Host mirrors the working banner bridge:
+ * [ReactViewGroup] + VISIBLE template child + manual [measureAndLayout].
  *
- * Critical: templates default to GONE. Banner works because [com.appodeal.ads.BannerView]
- * is VISIBLE before addView. We force the same.
+ * Without measureAndLayout, registerView succeeds but the child stays 0×0
+ * (`childSize=0x0`) and Appodeal logs "ad not visible globally".
  */
-class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodealEventHandler {
+class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppodealEventHandler {
 
     private val reactContext: ReactContext = context as ReactContext
     private val surfaceId: Int by lazy { UIManagerHelper.getSurfaceId(reactContext) }
@@ -65,7 +64,6 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
             val normalized = value.ifBlank { "contentStream" }
             if (field == normalized) return
             field = normalized
-            // Template class change requires a new child instance.
             tearDownAdView()
             boundAdId = null
             bindGeneration++
@@ -78,6 +76,22 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
     private var bindGeneration: Int = 0
     private var bindAttempts: Int = 0
 
+    /** Same as banner/MREC — RN will not size native children otherwise. */
+    private val measureAndLayout = Runnable {
+        val w = measuredWidth
+        val h = measuredHeight
+        if (w <= 0 || h <= 0) return@Runnable
+        for (i in 0 until childCount) {
+            val child = getChildAt(i)
+            child.visibility = VISIBLE
+            child.measure(
+                MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY)
+            )
+            child.layout(0, 0, child.measuredWidth, child.measuredHeight)
+        }
+    }
+
     init {
         liveViews.add(WeakReference(this))
         visibility = VISIBLE
@@ -85,6 +99,26 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
         contentDescription = "appodeal-native-host"
         clipChildren = false
         clipToPadding = false
+    }
+
+    override fun requestLayout() {
+        super.requestLayout()
+        post(measureAndLayout)
+    }
+
+    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
+        super.onLayout(changed, left, top, right, bottom)
+        post(measureAndLayout)
+        if (right - left > 0 && bottom - top > 0 && boundAdId == null && !adId.isNullOrEmpty()) {
+            scheduleBind(0)
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        if (boundAdId == null && !adId.isNullOrEmpty()) {
+            scheduleBind(0)
+        }
     }
 
     fun cleanup() {
@@ -99,20 +133,6 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
     }
 
     fun onActivityReady() {
-        if (boundAdId == null && !adId.isNullOrEmpty()) {
-            scheduleBind(0)
-        }
-    }
-
-    override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        super.onLayout(changed, left, top, right, bottom)
-        if (right - left > 0 && bottom - top > 0 && boundAdId == null && !adId.isNullOrEmpty()) {
-            scheduleBind(0)
-        }
-    }
-
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
         if (boundAdId == null && !adId.isNullOrEmpty()) {
             scheduleBind(0)
         }
@@ -135,23 +155,20 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
         removeAllViews()
     }
 
-    /**
-     * Same attach sequence as [RCTAppodealBannerView.showBannerView]:
-     * VISIBLE → layout params → removeAllViews → addView → bringToFront.
-     */
     private fun ensureAdView(): NativeAdView {
         adView?.let { existing ->
             existing.visibility = VISIBLE
+            post(measureAndLayout)
             return existing
         }
 
         val view = createTemplate(adTemplate).apply {
-            // Templates default to GONE — that was the blank-card root cause.
+            // Templates default to GONE — force VISIBLE like BannerView.
             visibility = VISIBLE
             descendantFocusability = FOCUS_BLOCK_DESCENDANTS
             setAdChoicesPosition(Position.END_TOP)
             contentDescription = "appodeal-native-ad"
-            layoutParams = LayoutParams(
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
@@ -165,6 +182,7 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
             (parent as? ViewGroup)?.bringChildToFront(this)
         } catch (_: Exception) {
         }
+        post(measureAndLayout)
 
         adView = view
         return view
@@ -201,7 +219,7 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
             return
         }
 
-        if (width <= 0 || height <= 0) {
+        if (measuredWidth <= 0 || measuredHeight <= 0) {
             if (!retry(gen, id, "view has zero size")) {
                 dispatchFailed(id, "view has zero size")
             }
@@ -236,8 +254,17 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
             return
         }
 
+        // Size the child BEFORE registerView so viewability can pass.
         val view = ensureAdView()
         view.visibility = VISIBLE
+        runMeasureAndLayoutNow()
+
+        if (view.width <= 0 || view.height <= 0) {
+            if (!retry(gen, id, "child still 0x0 after layout")) {
+                dispatchFailed(id, "child still 0x0 after layout")
+            }
+            return
+        }
 
         try {
             view.unregisterView()
@@ -253,15 +280,13 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
 
         view.visibility = VISIBLE
         this.visibility = VISIBLE
-        view.bringToFront()
-        requestLayout()
-        invalidate()
+        runMeasureAndLayoutNow()
 
         Log.d(
             TAG,
-            "registerView id=$id result=$registered host=${width}x${height} " +
+            "registerView id=$id result=$registered host=${measuredWidth}x${measuredHeight} " +
                 "childCount=$childCount childVis=${view.visibility} " +
-                "attached=$isAttachedToWindow title=${ad.title}"
+                "childSize=${view.width}x${view.height} title=${ad.title}"
         )
 
         if (gen != bindGeneration) return
@@ -272,8 +297,7 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
             uiHandler.postDelayed({
                 if (gen != bindGeneration) return@postDelayed
                 view.visibility = VISIBLE
-                this.visibility = VISIBLE
-                requestLayout()
+                runMeasureAndLayoutNow()
                 Log.d(
                     TAG,
                     "post-bind childCount=$childCount childVis=${view.visibility} " +
@@ -283,6 +307,21 @@ class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodeal
             dispatchLoaded(id)
         } else if (!retry(gen, id, "registerView returned false")) {
             dispatchFailed(id, "registerView returned false")
+        }
+    }
+
+    private fun runMeasureAndLayoutNow() {
+        val w = measuredWidth
+        val h = measuredHeight
+        if (w <= 0 || h <= 0) return
+        for (i in 0 until childCount) {
+            val child = getChildAt(i)
+            child.visibility = VISIBLE
+            child.measure(
+                MeasureSpec.makeMeasureSpec(w, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY)
+            )
+            child.layout(0, 0, child.measuredWidth, child.measuredHeight)
         }
     }
 
