@@ -190,15 +190,17 @@ class RCTAppodealNativeAdView(context: Context) :
         } catch (_: Exception) {
         }
 
-        // Same wiring as native_ad_view_custom.xml attrs → registerView.
-        // NativeAdView exposes JavaBean setters; from a Kotlin subclass those
-        // must be assigned as properties (setMediaView(...) does not resolve).
-        assets.media?.let { mediaView = it }
-        assets.icon?.let { iconView = it }
-        assets.title?.let { titleView = it }
-        assets.description?.let { descriptionView = it }
-        assets.callToAction?.let { callToActionView = it }
-        assets.attribution?.let { adAttributionView = it }
+        // Bind via Java helper — Appodeal's Kotlin metadata is obfuscated, so
+        // setMediaView / mediaView= are unresolved from a Kotlin subclass.
+        NativeAdViewAssetBinder.bind(
+            this,
+            assets.media,
+            assets.icon,
+            assets.title,
+            assets.description,
+            assets.callToAction,
+            assets.attribution
+        )
 
         val registered = try {
             registerView(ad, placement)
