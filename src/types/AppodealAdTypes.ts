@@ -35,7 +35,12 @@ export type AppodealNativeContentType = 'auto' | 'noVideo' | 'video';
 /**
  * Native ad template used by AppodealNative view
  */
-export type AppodealNativeTemplate = 'newsFeed' | 'appWall' | 'contentStream';
+export type AppodealNativeTemplate =
+  | 'newsFeed'
+  | 'appWall'
+  | 'contentStream'
+  /** Portrait feed card: media top ~56%, icon/title/CTA below (matches AdMob grid). */
+  | 'gridCard';
 
 /**
  * Metadata for a cached native ad pulled from the SDK

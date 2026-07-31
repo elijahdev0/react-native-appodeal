@@ -2,16 +2,23 @@ package com.appodeal.rnappodeal
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.appodeal.ads.NativeAd
 import com.appodeal.ads.nativead.NativeAdView
 import com.appodeal.ads.nativead.NativeAdViewAppWall
 import com.appodeal.ads.nativead.NativeAdViewContentStream
 import com.appodeal.ads.nativead.NativeAdViewNewsFeed
+import com.appodeal.ads.nativead.NativeIconView
+import com.appodeal.ads.nativead.NativeMediaView
 import com.appodeal.ads.nativead.Position
 import com.appodeal.rnappodeal.callbacks.RNAppodealEventHandler
 import com.appodeal.rnappodeal.constants.NativeEvents
@@ -71,6 +78,9 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
         }
 
     private var adView: NativeAdView? = null
+    private var titleView: TextView? = null
+    private var descriptionView: TextView? = null
+    private var ctaView: TextView? = null
     private var boundAdId: String? = null
     private var bindRunnable: Runnable? = null
     private var bindGeneration: Int = 0
@@ -95,7 +105,7 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
     init {
         liveViews.add(WeakReference(this))
         visibility = VISIBLE
-        setBackgroundColor(Color.WHITE)
+        setBackgroundColor(Color.TRANSPARENT)
         contentDescription = "appodeal-native-host"
         clipChildren = false
         clipToPadding = false
@@ -153,6 +163,9 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
             (view.parent as? ViewGroup)?.removeView(view)
         }
         removeAllViews()
+        titleView = null
+        descriptionView = null
+        ctaView = null
     }
 
     private fun ensureAdView(): NativeAdView {
@@ -192,8 +205,161 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
         return when (template) {
             "newsFeed" -> NativeAdViewNewsFeed(context)
             "appWall" -> NativeAdViewAppWall(context)
+            "gridCard" -> createGridCard(context)
             else -> NativeAdViewContentStream(context)
         }
+    }
+
+    /**
+     * Portrait feed card matching our AdMob native layout:
+     * media ~56% top, then icon + title/body, then CTA.
+     * Stock contentStream is horizontal and looks broken in a tall grid cell.
+     */
+    private fun createGridCard(ctx: Context): NativeAdView {
+        val adView = NativeAdView(ctx)
+        adView.setBackgroundColor(COLOR_SURFACE)
+
+        val root = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        val mediaWrap = FrameLayout(ctx).apply {
+            setBackgroundColor(COLOR_MEDIA_BG)
+        }
+        val media = NativeMediaView(ctx)
+        mediaWrap.addView(
+            media,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        val badge = TextView(ctx).apply {
+            text = "Ad"
+            setTextColor(Color.WHITE)
+            setBackgroundColor(0x8C000000.toInt())
+            setPadding(dp(ctx, 8), dp(ctx, 4), dp(ctx, 8), dp(ctx, 4))
+            textSize = 9f
+            typeface = Typeface.DEFAULT_BOLD
+            isAllCaps = true
+        }
+        mediaWrap.addView(
+            badge,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                gravity = Gravity.START or Gravity.TOP
+                setMargins(dp(ctx, 8), dp(ctx, 8), 0, 0)
+            }
+        )
+        root.addView(
+            mediaWrap,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.56f)
+        )
+
+        val panel = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(COLOR_SURFACE)
+            setPadding(dp(ctx, 10), dp(ctx, 10), dp(ctx, 10), dp(ctx, 10))
+        }
+
+        val header = LinearLayout(ctx).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.TOP
+        }
+        val icon = NativeIconView(ctx)
+        header.addView(
+            icon,
+            LinearLayout.LayoutParams(dp(ctx, 34), dp(ctx, 34)).apply {
+                rightMargin = dp(ctx, 8)
+            }
+        )
+
+        val textCol = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        val title = TextView(ctx).apply {
+            setTextColor(COLOR_TEXT)
+            textSize = 13f
+            typeface = Typeface.DEFAULT_BOLD
+            maxLines = 2
+            setLineSpacing(0f, 1.15f)
+        }
+        titleView = title
+        val description = TextView(ctx).apply {
+            setTextColor(COLOR_TEXT_SECONDARY)
+            textSize = 11f
+            maxLines = 1
+        }
+        descriptionView = description
+        textCol.addView(
+            title,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+        textCol.addView(
+            description,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(ctx, 2) }
+        )
+        header.addView(
+            textCol,
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        )
+        panel.addView(
+            header,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+        )
+
+        val cta = TextView(ctx).apply {
+            setTextColor(Color.WHITE)
+            setBackgroundColor(COLOR_CTA)
+            gravity = Gravity.CENTER
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(ctx, 12), dp(ctx, 9), dp(ctx, 12), dp(ctx, 9))
+            maxLines = 1
+        }
+        ctaView = cta
+        panel.addView(
+            cta,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { topMargin = dp(ctx, 8) }
+        )
+
+        root.addView(
+            panel,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.44f)
+        )
+
+        adView.addView(
+            root,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        adView.setMediaView(media)
+        adView.setIconView(icon)
+        adView.setTitleView(title)
+        adView.setDescriptionView(description)
+        adView.setCallToActionView(cta)
+        adView.setAdAttributionView(badge)
+        return adView
     }
 
     private fun scheduleBind(delayMs: Long) {
@@ -256,6 +422,10 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
 
         // Size the child BEFORE registerView so viewability can pass.
         val view = ensureAdView()
+        // Custom gridCard needs text filled before registerView (stock templates self-fill).
+        titleView?.text = ad.title.orEmpty().ifEmpty { "Ad" }
+        descriptionView?.text = ad.description.orEmpty()
+        ctaView?.text = ad.callToAction.orEmpty().ifEmpty { "Learn more" }
         view.visibility = VISIBLE
         runMeasureAndLayoutNow()
 
@@ -429,5 +599,19 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
         private fun prune() {
             liveViews.removeAll { it.get() == null }
         }
+
+        // Match light AdMob card tokens (RN outerClip still applies theme surface/radius).
+        private val COLOR_SURFACE: Int = Color.WHITE
+        private val COLOR_MEDIA_BG: Int = Color.parseColor("#1A1515")
+        private val COLOR_TEXT: Int = Color.parseColor("#2D2424")
+        private val COLOR_TEXT_SECONDARY: Int = Color.parseColor("#7F6D5F")
+        private val COLOR_CTA: Int = Color.parseColor("#2D2424")
     }
 }
+
+private fun dp(ctx: Context, value: Int): Int =
+    TypedValue.applyDimension(
+        TypedValue.COMPLEX_UNIT_DIP,
+        value.toFloat(),
+        ctx.resources.displayMetrics
+    ).toInt()
