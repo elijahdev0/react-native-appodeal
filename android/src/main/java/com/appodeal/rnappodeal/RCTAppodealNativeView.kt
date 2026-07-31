@@ -6,8 +6,12 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.ViewGroup
+import android.widget.FrameLayout
 import com.appodeal.ads.NativeAd
+import com.appodeal.ads.nativead.NativeAdView
+import com.appodeal.ads.nativead.NativeAdViewAppWall
 import com.appodeal.ads.nativead.NativeAdViewContentStream
+import com.appodeal.ads.nativead.NativeAdViewNewsFeed
 import com.appodeal.ads.nativead.Position
 import com.appodeal.rnappodeal.callbacks.RNAppodealEventHandler
 import com.appodeal.rnappodeal.constants.NativeEvents
@@ -20,21 +24,19 @@ import java.lang.ref.WeakReference
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
- * React Native host for Appodeal native ads.
+ * RN host for Appodeal native ads.
  *
- * Matches the official Appodeal Android demo
- * (`appodeal/appodeal-android-sdk` → `NativeListAdapter` / `NativeActivity`):
- * the list item **is** a [NativeAdViewContentStream], then `registerView(nativeAd)`.
+ * [NativeAdViewContentStream] / templates are **final** — cannot subclass.
+ * Official Android demo uses the template as the RecyclerView item root.
+ * Here we mirror the working banner bridge: always-VISIBLE [FrameLayout] host,
+ * template as MATCH_PARENT child, then [NativeAdView.registerView].
  *
- * Previous approach nested a GONE-by-default [com.appodeal.ads.nativead.NativeAdView]
- * inside [com.facebook.react.views.view.ReactViewGroup]. `registerView` returned true
- * but the child stayed absent from the UI hierarchy (uiautomator: empty host), while
- * banners (VISIBLE [com.appodeal.ads.BannerView] child) rendered fine.
+ * Critical: templates default to GONE. Banner works because [com.appodeal.ads.BannerView]
+ * is VISIBLE before addView. We force the same.
  */
-class RCTAppodealNativeView(
-    private val reactContext: ReactContext
-) : NativeAdViewContentStream(reactContext), RNAppodealEventHandler {
+class RCTAppodealNativeView(context: Context) : FrameLayout(context), RNAppodealEventHandler {
 
+    private val reactContext: ReactContext = context as ReactContext
     private val surfaceId: Int by lazy { UIManagerHelper.getSurfaceId(reactContext) }
     private val uiHandler: Handler by lazy { Handler(Looper.getMainLooper()) }
 
@@ -58,10 +60,19 @@ class RCTAppodealNativeView(
             }
         }
 
-    /** Kept for API compat; ContentStream template is fixed (matches Android demo default). */
-    @Suppress("UNUSED_PARAMETER")
     var adTemplate: String = "contentStream"
+        set(value) {
+            val normalized = value.ifBlank { "contentStream" }
+            if (field == normalized) return
+            field = normalized
+            // Template class change requires a new child instance.
+            tearDownAdView()
+            boundAdId = null
+            bindGeneration++
+            scheduleBind(BIND_DELAY_MS)
+        }
 
+    private var adView: NativeAdView? = null
     private var boundAdId: String? = null
     private var bindRunnable: Runnable? = null
     private var bindGeneration: Int = 0
@@ -69,27 +80,18 @@ class RCTAppodealNativeView(
 
     init {
         liveViews.add(WeakReference(this))
-        // Demo XML starts templates as gone; RN must keep a real laid-out host so
-        // Appodeal's viewability check can pass. Force visible like BannerView hosts.
         visibility = VISIBLE
-        descendantFocusability = FOCUS_BLOCK_DESCENDANTS
         setBackgroundColor(Color.WHITE)
-        setAdChoicesPosition(Position.END_TOP)
-        contentDescription = "appodeal-native-ad"
+        contentDescription = "appodeal-native-host"
+        clipChildren = false
+        clipToPadding = false
     }
 
     fun cleanup() {
         bindRunnable?.let { uiHandler.removeCallbacks(it) }
         bindRunnable = null
         bindGeneration++
-        try {
-            unregisterView()
-        } catch (_: Exception) {
-        }
-        try {
-            destroy()
-        } catch (_: Exception) {
-        }
+        tearDownAdView()
         boundAdId = null
         bindAttempts = 0
         val self = this
@@ -113,6 +115,66 @@ class RCTAppodealNativeView(
         super.onAttachedToWindow()
         if (boundAdId == null && !adId.isNullOrEmpty()) {
             scheduleBind(0)
+        }
+    }
+
+    private fun tearDownAdView() {
+        val view = adView
+        adView = null
+        if (view != null) {
+            try {
+                view.unregisterView()
+            } catch (_: Exception) {
+            }
+            try {
+                view.destroy()
+            } catch (_: Exception) {
+            }
+            (view.parent as? ViewGroup)?.removeView(view)
+        }
+        removeAllViews()
+    }
+
+    /**
+     * Same attach sequence as [RCTAppodealBannerView.showBannerView]:
+     * VISIBLE → layout params → removeAllViews → addView → bringToFront.
+     */
+    private fun ensureAdView(): NativeAdView {
+        adView?.let { existing ->
+            existing.visibility = VISIBLE
+            return existing
+        }
+
+        val view = createTemplate(adTemplate).apply {
+            // Templates default to GONE — that was the blank-card root cause.
+            visibility = VISIBLE
+            descendantFocusability = FOCUS_BLOCK_DESCENDANTS
+            setAdChoicesPosition(Position.END_TOP)
+            contentDescription = "appodeal-native-ad"
+            layoutParams = LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        removeAllViews()
+        this.visibility = VISIBLE
+        addView(view)
+        view.bringToFront()
+        try {
+            (parent as? ViewGroup)?.bringChildToFront(this)
+        } catch (_: Exception) {
+        }
+
+        adView = view
+        return view
+    }
+
+    private fun createTemplate(template: String): NativeAdView {
+        return when (template) {
+            "newsFeed" -> NativeAdViewNewsFeed(context)
+            "appWall" -> NativeAdViewAppWall(context)
+            else -> NativeAdViewContentStream(context)
         }
     }
 
@@ -174,33 +236,32 @@ class RCTAppodealNativeView(
             return
         }
 
-        // Same sequence as NativeActivity.showNative / NativeListAdapter.bind:
-        // configure → registerView(nativeAd). Do not destroy/recreate between binds.
+        val view = ensureAdView()
+        view.visibility = VISIBLE
+
         try {
-            unregisterView()
+            view.unregisterView()
         } catch (_: Exception) {
         }
 
-        visibility = VISIBLE
-
         val registered = try {
-            registerView(ad, placement)
+            view.registerView(ad, placement)
         } catch (e: Exception) {
             Log.e(TAG, "registerView threw", e)
             false
         }
 
-        // SDK flips GONE→VISIBLE on success; keep forcing VISIBLE for RN hosts.
-        visibility = VISIBLE
-        bringToFront()
-        (parent as? ViewGroup)?.bringChildToFront(this)
+        view.visibility = VISIBLE
+        this.visibility = VISIBLE
+        view.bringToFront()
         requestLayout()
         invalidate()
 
         Log.d(
             TAG,
-            "registerView id=$id result=$registered size=${width}x${height} " +
-                "vis=$visibility attached=$isAttachedToWindow title=${ad.title}"
+            "registerView id=$id result=$registered host=${width}x${height} " +
+                "childCount=$childCount childVis=${view.visibility} " +
+                "attached=$isAttachedToWindow title=${ad.title}"
         )
 
         if (gen != bindGeneration) return
@@ -210,11 +271,13 @@ class RCTAppodealNativeView(
             bindAttempts = 0
             uiHandler.postDelayed({
                 if (gen != bindGeneration) return@postDelayed
-                visibility = VISIBLE
+                view.visibility = VISIBLE
+                this.visibility = VISIBLE
                 requestLayout()
                 Log.d(
                     TAG,
-                    "post-bind childCount=$childCount size=${width}x${height} vis=$visibility"
+                    "post-bind childCount=$childCount childVis=${view.visibility} " +
+                        "childSize=${view.width}x${view.height}"
                 )
             }, 100L)
             dispatchLoaded(id)
@@ -259,7 +322,7 @@ class RCTAppodealNativeView(
             NativeEvents.ON_NATIVE_EXPIRED -> {
                 if (boundAdId == null) return
                 try {
-                    unregisterView()
+                    adView?.unregisterView()
                 } catch (_: Exception) {
                 }
                 boundAdId = null
@@ -316,7 +379,7 @@ class RCTAppodealNativeView(
                 if (view.adId == adId || view.boundAdId == adId) {
                     view.bindGeneration++
                     try {
-                        view.unregisterView()
+                        view.adView?.unregisterView()
                     } catch (_: Exception) {
                     }
                     view.boundAdId = null
