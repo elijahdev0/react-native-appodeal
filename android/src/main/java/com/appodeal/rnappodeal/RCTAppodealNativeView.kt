@@ -20,15 +20,15 @@ import com.facebook.react.uimanager.UIManagerHelper
 import com.facebook.react.uimanager.events.Event
 import com.facebook.react.uimanager.events.EventDispatcher
 import com.facebook.react.views.view.ReactViewGroup
+import java.lang.ref.WeakReference
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * Hosts an Appodeal native-ad template inside React Native.
  *
- * Important: ReactViewGroup does not lay out Android children unless we
- * explicitly measure/layout them (same pattern as banner/MREC). Templates
- * also need an Activity context so [NativeAd.canShow] / [NativeAdView.registerView]
- * succeed — ReactContext alone often makes registerView return false and the
- * template stays GONE.
+ * ReactViewGroup does not lay out Android children unless we measure them
+ * (same pattern as banner/MREC). Templates also need an Activity context so
+ * [NativeAd.canShow] / [NativeAdView.registerView] succeed.
  */
 class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppodealEventHandler {
 
@@ -38,37 +38,33 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
     var adId: String? = null
         set(value) {
             if (field == value) return
+            unregisterCurrent()
             field = value
-            boundAdId = null
-            scheduleBind()
+            scheduleBind(0)
         }
 
     var placement: String = "default"
         set(value) {
             if (field == value) return
+            unregisterCurrent()
             field = value
-            boundAdId = null
-            scheduleBind()
+            scheduleBind(0)
         }
 
     var adTemplate: String = "contentStream"
         set(value) {
             if (field == value) return
             field = value
-            boundAdId = null
             recreateNativeAdView()
-            scheduleBind()
+            scheduleBind(0)
         }
 
     private var nativeAdView: NativeAdView? = null
     private var boundAdId: String? = null
     private var bindRunnable: Runnable? = null
-    /** True when the template was constructed with an Activity (needed for canShow). */
     private var createdWithActivity: Boolean = false
+    private var bindAttempts: Int = 0
 
-    /**
-     * Mirror banner/MREC: RN won't size native children without this.
-     */
     private val measureAndLayout = Runnable {
         val w = measuredWidth
         val h = measuredHeight
@@ -84,6 +80,7 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
     }
 
     init {
+        liveViews.add(WeakReference(this))
         recreateNativeAdView()
     }
 
@@ -95,19 +92,16 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         super.onLayout(changed, left, top, right, bottom)
         post(measureAndLayout)
-        if (right - left > 0 && bottom - top > 0) {
-            scheduleBind()
+        if (right - left > 0 && bottom - top > 0 && boundAdId == null && !adId.isNullOrEmpty()) {
+            scheduleBind(0)
         }
     }
 
     fun cleanup() {
         bindRunnable?.let { uiHandler.removeCallbacks(it) }
         bindRunnable = null
+        unregisterCurrent()
         nativeAdView?.let { view ->
-            try {
-                view.unregisterView()
-            } catch (_: Exception) {
-            }
             try {
                 view.destroy()
             } catch (_: Exception) {
@@ -115,36 +109,53 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
         }
         removeAllViews()
         nativeAdView = null
-        boundAdId = null
+        val self = this
+        liveViews.removeAll { it.get() == null || it.get() === self }
+    }
+
+    /** Called when Activity becomes available (module onHostResume). */
+    fun onActivityReady() {
+        if (boundAdId == null && !adId.isNullOrEmpty()) {
+            scheduleBind(0)
+        }
     }
 
     private fun hostContext(): Context {
-        return reactContext.currentActivity ?: context
+        return RNAppodealActivityHolder.get()
+            ?: reactContext.currentActivity
+            ?: context
+    }
+
+    private fun unregisterCurrent() {
+        if (boundAdId != null || nativeAdView != null) {
+            try {
+                nativeAdView?.unregisterView()
+            } catch (_: Exception) {
+            }
+        }
+        boundAdId = null
+        bindAttempts = 0
     }
 
     private fun recreateNativeAdView() {
+        unregisterCurrent()
         nativeAdView?.let { view ->
-            try {
-                view.unregisterView()
-            } catch (_: Exception) {
-            }
             try {
                 view.destroy()
             } catch (_: Exception) {
             }
         }
         removeAllViews()
-        boundAdId = null
 
-        val host = hostContext()
-        createdWithActivity = reactContext.currentActivity != null
-        val view = createNativeAdView(host)
+        val activity = RNAppodealActivityHolder.get() ?: reactContext.currentActivity
+        createdWithActivity = activity != null
+        val view = createNativeAdView(activity ?: context)
         nativeAdView = view
         view.layoutParams = FrameLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         )
-        // Templates start GONE until registerView succeeds.
+        view.descendantFocusability = FOCUS_BLOCK_DESCENDANTS
         addView(view)
         post(measureAndLayout)
     }
@@ -157,11 +168,10 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
         }
     }
 
-    private fun scheduleBind() {
+    private fun scheduleBind(delayMs: Long) {
         bindRunnable?.let { uiHandler.removeCallbacks(it) }
         val runnable = Runnable { bindAd() }.also { bindRunnable = it }
-        // Slight delay so RN has committed size (same idea as banner show).
-        uiHandler.postDelayed(runnable, 50L)
+        uiHandler.postDelayed(runnable, delayMs.coerceAtLeast(0L))
     }
 
     private fun bindAd() {
@@ -171,31 +181,53 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
 
         val ad: NativeAd = RNAppodealNativeAdStore.get(id) ?: run {
             Log.w(TAG, "bindAd: no NativeAd in store for id=$id")
+            // Ad may arrive slightly later; retry a few times before failing.
+            if (retryOrFail(id, "native ad not in store")) return
             return
         }
 
-        // Prefer Activity context — ReactContext alone often makes canShow/registerView fail.
-        if (nativeAdView == null || (reactContext.currentActivity != null && !createdWithActivity)) {
+        val activity = RNAppodealActivityHolder.get() ?: reactContext.currentActivity
+        if (nativeAdView == null || (activity != null && !createdWithActivity)) {
             recreateNativeAdView()
         }
-        val view = nativeAdView ?: return
+        val view = nativeAdView ?: run {
+            dispatchFailed(id, "native ad view missing")
+            return
+        }
 
         if (measuredWidth <= 0 || measuredHeight <= 0) {
-            Log.d(TAG, "bindAd: waiting for size id=$id")
+            Log.d(TAG, "bindAd: waiting for size id=$id attempt=$bindAttempts")
+            retryOrFail(id, "view has zero size")
+            return
+        }
+
+        if (activity == null) {
+            Log.d(TAG, "bindAd: waiting for Activity id=$id attempt=$bindAttempts")
+            retryOrFail(id, "activity unavailable")
             return
         }
 
         post(measureAndLayout)
 
         val canShow = try {
-            ad.canShow(hostContext(), placement)
+            ad.canShow(activity, placement)
         } catch (e: Exception) {
             Log.e(TAG, "canShow threw", e)
             false
         }
         if (!canShow) {
-            Log.w(TAG, "bindAd: canShow=false id=$id placement=$placement")
+            Log.w(TAG, "bindAd: canShow=false id=$id placement=$placement attempt=$bindAttempts")
+            retryOrFail(id, "canShow=false for placement=$placement")
             return
+        }
+
+        // Ensure clean registration if something was partially bound.
+        if (boundAdId != null && boundAdId != id) {
+            try {
+                view.unregisterView()
+            } catch (_: Exception) {
+            }
+            boundAdId = null
         }
 
         val registered = try {
@@ -212,22 +244,77 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
 
         if (registered) {
             boundAdId = id
+            bindAttempts = 0
             visibility = VISIBLE
             view.visibility = VISIBLE
+            try {
+                (parent as? ViewGroup)?.bringChildToFront(this)
+            } catch (_: Exception) {
+            }
+            view.bringToFront()
             post(measureAndLayout)
+            dispatchLoaded(id)
+        } else {
+            retryOrFail(id, "registerView returned false")
         }
     }
 
+    /** @return true if a retry was scheduled */
+    private fun retryOrFail(id: String, reason: String): Boolean {
+        bindAttempts += 1
+        if (bindAttempts <= MAX_BIND_ATTEMPTS) {
+            val delay = BIND_BASE_DELAY_MS * bindAttempts
+            scheduleBind(delay)
+            return true
+        }
+        dispatchFailed(id, reason)
+        return false
+    }
+
+    private fun dispatchLoaded(id: String) {
+        val params = Arguments.createMap().apply { putString("adId", id) }
+        dispatchFabricEvent(getId(), NativeEvents.ON_AD_LOADED, params)
+    }
+
+    private fun dispatchFailed(id: String, message: String) {
+        Log.w(TAG, "bind failed id=$id message=$message")
+        val params = Arguments.createMap().apply {
+            putString("adId", id)
+            putString("message", message)
+        }
+        dispatchFabricEvent(getId(), NativeEvents.ON_AD_FAILED_TO_LOAD, params)
+    }
+
     override fun handleEvent(event: String, params: WritableMap?) {
+        // Global SDK callbacks fan out to every view — only forward if this
+        // view is bound, and attach adId when missing.
         when (event) {
-            NativeEvents.ON_NATIVE_LOADED -> dispatchFabricEvent(id, NativeEvents.ON_AD_LOADED, params)
-            NativeEvents.ON_NATIVE_FAILED_TO_LOAD ->
-                dispatchFabricEvent(id, NativeEvents.ON_AD_FAILED_TO_LOAD, params)
-            NativeEvents.ON_NATIVE_SHOWN -> dispatchFabricEvent(id, NativeEvents.ON_AD_SHOWN, params)
-            NativeEvents.ON_NATIVE_CLICKED -> dispatchFabricEvent(id, NativeEvents.ON_AD_CLICKED, params)
-            NativeEvents.ON_NATIVE_EXPIRED -> dispatchFabricEvent(id, NativeEvents.ON_AD_EXPIRED, params)
+            NativeEvents.ON_NATIVE_SHOWN -> {
+                if (boundAdId == null) return
+                dispatchFabricEvent(getId(), NativeEvents.ON_AD_SHOWN, withAdId(params))
+            }
+            NativeEvents.ON_NATIVE_CLICKED -> {
+                if (boundAdId == null) return
+                dispatchFabricEvent(getId(), NativeEvents.ON_AD_CLICKED, withAdId(params))
+            }
+            NativeEvents.ON_NATIVE_EXPIRED -> {
+                if (boundAdId == null) return
+                unregisterCurrent()
+                visibility = GONE
+                dispatchFabricEvent(getId(), NativeEvents.ON_AD_EXPIRED, withAdId(params))
+            }
+            // Cache-level load events are not per-view bind results — ignore here.
             else -> Unit
         }
+    }
+
+    private fun withAdId(params: WritableMap?): WritableMap {
+        val copy = Arguments.createMap()
+        if (params != null) copy.merge(params)
+        if (!copy.hasKey("adId")) {
+            copy.putString("adId", boundAdId ?: adId)
+        }
+        return copy
     }
 
     private fun dispatchFabricEvent(
@@ -260,5 +347,34 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
 
     companion object {
         private const val TAG = "RNAppodealNative"
+        private const val MAX_BIND_ATTEMPTS = 8
+        private const val BIND_BASE_DELAY_MS = 250L
+
+        private val liveViews = CopyOnWriteArrayList<WeakReference<RCTAppodealNativeView>>()
+
+        fun notifyActivityReady() {
+            pruneLiveViews()
+            for (ref in liveViews) {
+                ref.get()?.onActivityReady()
+            }
+        }
+
+        fun unbindAdId(adId: String) {
+            pruneLiveViews()
+            for (ref in liveViews) {
+                val view = ref.get() ?: continue
+                if (view.adId == adId || view.boundAdId == adId) {
+                    view.unregisterCurrent()
+                    view.visibility = GONE
+                }
+            }
+        }
+
+        private fun pruneLiveViews() {
+            val it = liveViews.iterator()
+            while (it.hasNext()) {
+                if (it.next().get() == null) it.remove()
+            }
+        }
     }
 }

@@ -55,6 +55,7 @@ internal class RNAppodealModuleImpl(
 
     init {
         this.currentActivity = WeakReference(reactContext.currentActivity)
+        RNAppodealActivityHolder.set(reactContext.currentActivity)
         this.reactContext.addLifecycleEventListener(this)
     }
 
@@ -66,8 +67,9 @@ internal class RNAppodealModuleImpl(
     private fun getActivity(): Activity? {
         if (reactContext.hasCurrentActivity()) {
             currentActivity = WeakReference(reactContext.currentActivity)
+            RNAppodealActivityHolder.set(reactContext.currentActivity)
         }
-        return currentActivity?.get()
+        return currentActivity?.get() ?: RNAppodealActivityHolder.get()
     }
 
     /**
@@ -412,6 +414,7 @@ internal class RNAppodealModuleImpl(
     }
 
     fun destroyNativeAd(adId: String) {
+        RCTAppodealNativeView.unbindAdId(adId)
         RNAppodealNativeAdStore.remove(adId)
     }
 
@@ -460,7 +463,12 @@ internal class RNAppodealModuleImpl(
     }
 
     override fun onHostResume() {
-        // Not implemented
+        val activity = reactContext.currentActivity
+        if (activity != null) {
+            currentActivity = WeakReference(activity)
+            RNAppodealActivityHolder.set(activity)
+        }
+        RCTAppodealNativeView.notifyActivityReady()
     }
 
     companion object Companion {
