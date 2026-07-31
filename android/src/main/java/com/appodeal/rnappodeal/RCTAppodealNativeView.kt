@@ -33,7 +33,7 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
             bindAd()
         }
 
-    var template: String = "contentStream"
+    var adTemplate: String = "contentStream"
         set(value) {
             if (field != value) {
                 field = value
@@ -69,7 +69,7 @@ class RCTAppodealNativeView(context: Context) : ReactViewGroup(context), RNAppod
     }
 
     private fun createNativeAdView(): NativeAdView {
-        return when (template) {
+        return when (adTemplate) {
             "newsFeed" -> NativeAdViewNewsFeed(context)
             "appWall" -> NativeAdViewAppWall(context)
             else -> NativeAdViewContentStream(context)

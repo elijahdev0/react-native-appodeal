@@ -36,8 +36,8 @@ class RNAppodealNativeViewManager :
         value?.let { view.placement = it }
     }
 
-    @ReactProp(name = "template")
-    fun setTemplate(view: RCTAppodealNativeView, value: String?) {
-        value?.let { view.template = it }
+    @ReactProp(name = "adTemplate")
+    fun setAdTemplate(view: RCTAppodealNativeView, value: String?) {
+        value?.let { view.adTemplate = it }
     }
 }

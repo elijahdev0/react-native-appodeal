@@ -9,14 +9,14 @@ import AppodealNativeView, {
 } from './specs/AppodealNativeViewNativeComponent';
 
 const AppodealNative = ({
-  template = 'contentStream',
+  adTemplate = 'contentStream',
   placement = 'default',
   style,
   ...rest
 }: NativeProps) => {
   return (
     <AppodealNativeView
-      template={template}
+      adTemplate={adTemplate}
       placement={placement}
       style={style}
       {...rest}

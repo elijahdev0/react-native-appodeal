@@ -14,7 +14,8 @@ export type NativeAdLoadFailedEvent = Readonly<{
 export interface NativeProps extends ViewProps {
   adId?: string;
   placement?: string;
-  template?: string;
+  /** Layout style: newsFeed | appWall | contentStream. Named adTemplate — `template` is a C++ keyword and breaks Fabric codegen. */
+  adTemplate?: string;
   onAdLoaded?: DirectEventHandler<NativeAdInfoEvent>;
   onAdFailedToLoad?: DirectEventHandler<NativeAdLoadFailedEvent>;
   onAdShown?: DirectEventHandler<NativeAdInfoEvent>;

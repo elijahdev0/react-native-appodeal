@@ -53,10 +53,10 @@ public class RNAppodealNativeViewManager extends SimpleViewManager<RCTAppodealNa
         }
     }
 
-    @ReactProp(name = "template")
-    public void setTemplate(RCTAppodealNativeView view, @Nullable String value) {
+    @ReactProp(name = "adTemplate")
+    public void setAdTemplate(RCTAppodealNativeView view, @Nullable String value) {
         if (value != null) {
-            view.setTemplate(value);
+            view.setAdTemplate(value);
         }
     }
 }

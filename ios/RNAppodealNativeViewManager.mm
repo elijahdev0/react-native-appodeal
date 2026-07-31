@@ -11,7 +11,7 @@ RCT_EXPORT_MODULE(RNAppodealNativeView);
 
 RCT_EXPORT_VIEW_PROPERTY(adId, NSString)
 RCT_EXPORT_VIEW_PROPERTY(placement, NSString)
-RCT_REMAP_VIEW_PROPERTY(template, templateName, NSString)
+RCT_REMAP_VIEW_PROPERTY(adTemplate, templateName, NSString)
 
 RCT_EXPORT_VIEW_PROPERTY(onAdLoaded, RCTBubblingEventBlock)
 RCT_EXPORT_VIEW_PROPERTY(onAdFailedToLoad, RCTBubblingEventBlock)
