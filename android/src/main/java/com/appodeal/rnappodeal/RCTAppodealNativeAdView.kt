@@ -191,12 +191,14 @@ class RCTAppodealNativeAdView(context: Context) :
         }
 
         // Same wiring as native_ad_view_custom.xml attrs → registerView.
-        assets.media?.let { setMediaView(it) }
-        assets.icon?.let { setIconView(it) }
-        assets.title?.let { setTitleView(it) }
-        assets.description?.let { setDescriptionView(it) }
-        assets.callToAction?.let { setCallToActionView(it) }
-        assets.attribution?.let { setAdAttributionView(it) }
+        // NativeAdView exposes JavaBean setters; from a Kotlin subclass those
+        // must be assigned as properties (setMediaView(...) does not resolve).
+        assets.media?.let { mediaView = it }
+        assets.icon?.let { iconView = it }
+        assets.title?.let { titleView = it }
+        assets.description?.let { descriptionView = it }
+        assets.callToAction?.let { callToActionView = it }
+        assets.attribution?.let { adAttributionView = it }
 
         val registered = try {
             registerView(ad, placement)
@@ -304,7 +306,7 @@ class RCTAppodealNativeAdView(context: Context) :
         val title: TextView?,
         val description: TextView?,
         val callToAction: View?,
-        val attribution: View?
+        val attribution: TextView?
     )
 
     companion object {
@@ -344,7 +346,7 @@ class RCTAppodealNativeAdView(context: Context) :
             var title: TextView? = null
             var description: TextView? = null
             var callToAction: View? = null
-            var attribution: View? = null
+            var attribution: TextView? = null
 
             fun walk(view: View) {
                 if (view is RCTAppodealNativeAssetView) {
